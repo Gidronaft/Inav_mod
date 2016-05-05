@@ -169,28 +169,26 @@ typedef enum {
 
     NAV_STATE_RTH_2D_INITIALIZE,                // 9
     NAV_STATE_RTH_2D_HEAD_HOME,                 // 10
-    NAV_STATE_RTH_2D_GPS_FAILING,               // 11
-    NAV_STATE_RTH_2D_FINISHING,                 // 12
-    NAV_STATE_RTH_2D_FINISHED,                  // 13
+    NAV_STATE_RTH_2D_FINISHING,                 // 11
+    NAV_STATE_RTH_2D_FINISHED,                  // 12
 
-    NAV_STATE_RTH_3D_INITIALIZE,                // 14
-    NAV_STATE_RTH_3D_CLIMB_TO_SAFE_ALT,         // 15
-    NAV_STATE_RTH_3D_HEAD_HOME,                 // 16
-    NAV_STATE_RTH_3D_GPS_FAILING,               // 17
-    NAV_STATE_RTH_3D_HOVER_PRIOR_TO_LANDING,    // 18
-    NAV_STATE_RTH_3D_LANDING,                   // 19
-    NAV_STATE_RTH_3D_FINISHING,                 // 20
-    NAV_STATE_RTH_3D_FINISHED,                  // 21
+    NAV_STATE_RTH_3D_INITIALIZE,                // 13
+    NAV_STATE_RTH_3D_CLIMB_TO_SAFE_ALT,         // 14
+    NAV_STATE_RTH_3D_HEAD_HOME,                 // 15
+    NAV_STATE_RTH_3D_HOVER_PRIOR_TO_LANDING,    // 16
+    NAV_STATE_RTH_3D_LANDING,                   // 17
+    NAV_STATE_RTH_3D_FINISHING,                 // 28
+    NAV_STATE_RTH_3D_FINISHED,                  // 19
 
-    NAV_STATE_WAYPOINT_INITIALIZE,              // 22
-    NAV_STATE_WAYPOINT_PRE_ACTION,              // 23
-    NAV_STATE_WAYPOINT_IN_PROGRESS,             // 24
-    NAV_STATE_WAYPOINT_REACHED,                 // 25
-    NAV_STATE_WAYPOINT_FINISHED,                // 26
+    NAV_STATE_WAYPOINT_INITIALIZE,              // 20
+    NAV_STATE_WAYPOINT_PRE_ACTION,              // 21
+    NAV_STATE_WAYPOINT_IN_PROGRESS,             // 22
+    NAV_STATE_WAYPOINT_REACHED,                 // 23
+    NAV_STATE_WAYPOINT_FINISHED,                // 24
 
-    NAV_STATE_EMERGENCY_LANDING_INITIALIZE,     // 27
-    NAV_STATE_EMERGENCY_LANDING_IN_PROGRESS,    // 28
-    NAV_STATE_EMERGENCY_LANDING_FINISHED,       // 29
+    NAV_STATE_EMERGENCY_LANDING_INITIALIZE,     // 25
+    NAV_STATE_EMERGENCY_LANDING_IN_PROGRESS,    // 26
+    NAV_STATE_EMERGENCY_LANDING_FINISHED,       // 27
 
     NAV_STATE_COUNT,
 } navigationFSMState_t;
