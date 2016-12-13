@@ -64,6 +64,7 @@ typedef enum {
     ANTI_WINDUP             = (1 << 5),
     FLAPERON_AVAILABLE      = (1 << 6),
     NAV_MOTOR_STOP_OR_IDLE  = (1 << 7),     // navigation requests MOTOR_STOP or motor idle regardless of throttle stick, will only activate if MOTOR_STOP feature is available
+    PWM_DRIVER_AVAILABLE    = (1 << 8)
 } stateFlags_t;
 
 #define DISABLE_STATE(mask) (stateFlags &= ~(mask))
