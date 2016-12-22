@@ -37,6 +37,7 @@
 #define DISABLE_MPU6500       IOHi(mpuSpi6500CsPin)
 #define ENABLE_MPU6500        IOLo(mpuSpi6500CsPin)
 
+#if defined(USE_GYRO_SPI_MPU6500) || defined(USE_ACC_SPI_MPU6500)
 static IO_t mpuSpi6500CsPin = IO_NONE;
 
 bool mpu6500WriteRegister(uint8_t reg, uint8_t data)
@@ -141,3 +142,4 @@ bool mpu6500SpiGyroDetect(gyroDev_t *gyro)
 
     return true;
 }
+#endif
