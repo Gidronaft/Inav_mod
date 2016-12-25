@@ -44,6 +44,7 @@
 #include "telemetry/mavlink.h"
 #include "telemetry/jetiexbus.h"
 #include "telemetry/ibus.h"
+#include "telemetry/crsf.h"
 
 static telemetryConfig_t *telemetryConfig;
 
@@ -80,6 +81,10 @@ void telemetryInit(void)
 
 #if defined(TELEMETRY_IBUS)
     initIbusTelemetry(telemetryConfig);
+#endif
+
+#if defined(TELEMETRY_CRSF)
+    initCrsfTelemetry();
 #endif
 
     telemetryCheckState();
@@ -136,6 +141,9 @@ void telemetryCheckState(void)
     checkIbusTelemetryState();
 #endif
 
+#if defined(TELEMETRY_CRSF)
+    checkCrsfTelemetryState();
+#endif
 }
 
 void telemetryProcess(timeUs_t currentTimeUs, rxConfig_t *rxConfig, uint16_t deadband3d_throttle)
@@ -175,6 +183,9 @@ void telemetryProcess(timeUs_t currentTimeUs, rxConfig_t *rxConfig, uint16_t dea
     handleIbusTelemetry();
 #endif
 
+#if defined(TELEMETRY_CRSF)
+    handleCrsfTelemetry(currentTimeUs);
+#endif
 }
 
 #endif

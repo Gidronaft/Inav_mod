@@ -55,6 +55,7 @@
 #include "rx/ibus.h"
 #include "rx/jetiexbus.h"
 #include "rx/rx_spi.h"
+#include "rx/crsf.h"
 
 
 //#define DEBUG_RX_SIGNAL_LOSS
@@ -72,6 +73,7 @@ static bool rxIsInFailsafeModeNotDataDriven = true;
 
 static timeUs_t rxUpdateAt = 0;
 static timeUs_t needRxSignalBefore = 0;
+static uint32_t needRxSignalMaxDelayUs = 0;
 static timeUs_t suspendRxSignalUntil = 0;
 static uint8_t  skipRxSamples = 0;
 
@@ -104,8 +106,6 @@ static uint8_t nullFrameStatus(void)
 {
     return RX_FRAME_PENDING;
 }
-
-void serialRxInit(const rxConfig_t *rxConfig, rxRuntimeConfig_t *rxRuntimeConfig);
 
 void useRxConfig(const rxConfig_t *rxConfigToUse)
 {
@@ -149,70 +149,8 @@ void resetAllRxChannelRangeConfigurations(rxChannelRangeConfiguration_t *rxChann
     }
 }
 
-void rxInit(const rxConfig_t *rxConfig, const modeActivationCondition_t *modeActivationConditions)
-{
-    uint8_t i;
-    uint16_t value;
-
-    useRxConfig(rxConfig);
-    rxRuntimeConfig.rcReadRawFn = nullReadRawRC;
-    rxRuntimeConfig.rcFrameStatusFn = nullFrameStatus;
-    rcSampleIndex = 0;
-
-    for (i = 0; i < MAX_SUPPORTED_RC_CHANNEL_COUNT; i++) {
-        rcData[i] = rxConfig->midrc;
-        rcInvalidPulsPeriod[i] = millis() + MAX_INVALID_PULS_TIME;
-    }
-
-    rcData[THROTTLE] = (feature(FEATURE_3D)) ? rxConfig->midrc : rxConfig->rx_min_usec;
-
-    // Initialize ARM switch to OFF position when arming via switch is defined
-    for (i = 0; i < MAX_MODE_ACTIVATION_CONDITION_COUNT; i++) {
-        const modeActivationCondition_t *modeActivationCondition = &modeActivationConditions[i];
-        if (modeActivationCondition->modeId == BOXARM && IS_RANGE_USABLE(&modeActivationCondition->range)) {
-            // ARM switch is defined, determine an OFF value
-            if (modeActivationCondition->range.startStep > 0) {
-                value = MODE_STEP_TO_CHANNEL_VALUE((modeActivationCondition->range.startStep - 1));
-            } else {
-                value = MODE_STEP_TO_CHANNEL_VALUE((modeActivationCondition->range.endStep + 1));
-            }
-            // Initialize ARM AUX channel to OFF value
-            rcData[modeActivationCondition->auxChannelIndex + NON_AUX_CHANNEL_COUNT] = value;
-        }
-    }
-
 #ifdef SERIAL_RX
-    if (feature(FEATURE_RX_SERIAL)) {
-        serialRxInit(rxConfig, &rxRuntimeConfig);
-    }
-#endif
-
-#ifndef SKIP_RX_MSP
-    if (feature(FEATURE_RX_MSP)) {
-        rxMspInit(rxConfig, &rxRuntimeConfig);
-    }
-#endif
-
-#ifdef USE_RX_SPI
-    if (feature(FEATURE_RX_SPI)) {
-        const bool enabled = rxSpiInit(rxConfig, &rxRuntimeConfig);
-        if (!enabled) {
-            featureClear(FEATURE_RX_SPI);
-            rxRuntimeConfig.rcReadRawFn = nullReadRawRC;
-        }
-    }
-#endif
-
-#ifndef SKIP_RX_PWM_PPM
-    if (feature(FEATURE_RX_PPM) || feature(FEATURE_RX_PARALLEL_PWM)) {
-        rxRuntimeConfig.rxRefreshRate = 20000;
-        rxPwmInit(rxConfig, &rxRuntimeConfig);
-    }
-#endif
-}
-
-#ifdef SERIAL_RX
-void serialRxInit(const rxConfig_t *rxConfig, rxRuntimeConfig_t *rxRuntimeConfig)
+bool serialRxInit(const rxConfig_t *rxConfig, rxRuntimeConfig_t *rxRuntimeConfig)
 {
     bool enabled = false;
     switch (rxConfig->serialrx_provider) {
@@ -255,65 +193,87 @@ void serialRxInit(const rxConfig_t *rxConfig, rxRuntimeConfig_t *rxRuntimeConfig
         enabled = jetiExBusInit(rxConfig, rxRuntimeConfig);
         break;
 #endif
+#ifdef USE_SERIALRX_CRSF
+    case SERIALRX_CRSF:
+        enabled = crsfRxInit(rxConfig, rxRuntimeConfig);
+        break;
+#endif
     default:
         enabled = false;
         break;
     }
 
-    if (!enabled) {
-        featureClear(FEATURE_RX_SERIAL);
-        rxRuntimeConfig->rcReadRawFn = nullReadRawRC;
-    }
+    return enabled;
 }
+#endif
 
-static uint8_t serialRxFrameStatus(const rxConfig_t *rxConfig)
+void rxInit(const rxConfig_t *rxConfig, const modeActivationCondition_t *modeActivationConditions)
 {
-    /**
-     * FIXME: Each of the xxxxFrameStatus() methods MUST be able to survive being called without the
-     * corresponding xxxInit() method having been called first.
-     *
-     * This situation arises when the cli or the msp changes the value of rxConfig->serialrx_provider
-     *
-     * A solution is for the ___Init() to configure the serialRxFrameStatus function pointer which
-     * should be used instead of the switch statement below.
-     */
-    switch (rxConfig->serialrx_provider) {
-#ifdef USE_SERIALRX_SPEKTRUM
-    case SERIALRX_SPEKTRUM1024:
-    case SERIALRX_SPEKTRUM2048:
-        return spektrumFrameStatus();
-#endif
-#ifdef USE_SERIALRX_SBUS
-    case SERIALRX_SBUS:
-        return sbusFrameStatus();
-#endif
-#ifdef USE_SERIALRX_SUMD
-    case SERIALRX_SUMD:
-        return sumdFrameStatus();
-#endif
-#ifdef USE_SERIALRX_SUMH
-    case SERIALRX_SUMH:
-        return sumhFrameStatus();
-#endif
-#ifdef USE_SERIALRX_XBUS
-    case SERIALRX_XBUS_MODE_B:
-    case SERIALRX_XBUS_MODE_B_RJ01:
-        return xBusFrameStatus();
-#endif
-#ifdef USE_SERIALRX_IBUS
-    case SERIALRX_IBUS:
-        return ibusFrameStatus();
-#endif
-#ifdef USE_SERIALRX_JETIEXBUS
-    case SERIALRX_JETIEXBUS:
-        return jetiExBusFrameStatus();
-#endif
-    default:
-        return RX_FRAME_PENDING;
+    uint8_t i;
+    uint16_t value;
+
+    useRxConfig(rxConfig);
+    rxRuntimeConfig.rcReadRawFn = nullReadRawRC;
+    rxRuntimeConfig.rcFrameStatusFn = nullFrameStatus;
+    rcSampleIndex = 0;
+    needRxSignalMaxDelayUs = DELAY_10_HZ;
+
+    for (i = 0; i < MAX_SUPPORTED_RC_CHANNEL_COUNT; i++) {
+        rcData[i] = rxConfig->midrc;
+        rcInvalidPulsPeriod[i] = millis() + MAX_INVALID_PULS_TIME;
     }
-    return RX_FRAME_PENDING;
-}
+
+    rcData[THROTTLE] = (feature(FEATURE_3D)) ? rxConfig->midrc : rxConfig->rx_min_usec;
+
+    // Initialize ARM switch to OFF position when arming via switch is defined
+    for (i = 0; i < MAX_MODE_ACTIVATION_CONDITION_COUNT; i++) {
+        const modeActivationCondition_t *modeActivationCondition = &modeActivationConditions[i];
+        if (modeActivationCondition->modeId == BOXARM && IS_RANGE_USABLE(&modeActivationCondition->range)) {
+            // ARM switch is defined, determine an OFF value
+            if (modeActivationCondition->range.startStep > 0) {
+                value = MODE_STEP_TO_CHANNEL_VALUE((modeActivationCondition->range.startStep - 1));
+            } else {
+                value = MODE_STEP_TO_CHANNEL_VALUE((modeActivationCondition->range.endStep + 1));
+            }
+            // Initialize ARM AUX channel to OFF value
+            rcData[modeActivationCondition->auxChannelIndex + NON_AUX_CHANNEL_COUNT] = value;
+        }
+    }
+
+#ifdef SERIAL_RX
+    if (feature(FEATURE_RX_SERIAL)) {
+        const bool enabled = serialRxInit(rxConfig, &rxRuntimeConfig);
+        if (!enabled) {
+            featureClear(FEATURE_RX_SERIAL);
+            rxRuntimeConfig.rcReadRawFn = nullReadRawRC;
+            rxRuntimeConfig.rcFrameStatusFn = nullFrameStatus;
+        }
+    }
 #endif
+
+#ifdef USE_RX_MSP
+    if (feature(FEATURE_RX_MSP)) {
+        rxMspInit(rxConfig, &rxRuntimeConfig);
+        needRxSignalMaxDelayUs = DELAY_5_HZ;
+    }
+#endif
+
+#ifdef USE_RX_SPI
+    if (feature(FEATURE_RX_SPI)) {
+        const bool enabled = rxSpiInit(rxConfig, &rxRuntimeConfig);
+        if (!enabled) {
+            featureClear(FEATURE_RX_SPI);
+            rxRuntimeConfig.rcReadRawFn = nullReadRawRC;
+        }
+    }
+#endif
+
+#if defined(USE_PWM) || defined(USE_PPM)
+    if (feature(FEATURE_RX_PPM) || feature(FEATURE_RX_PARALLEL_PWM)) {
+        rxPwmInit(rxConfig, &rxRuntimeConfig);
+    }
+#endif
+}
 
 static uint8_t calculateChannelRemapping(const uint8_t *channelMap, uint8_t channelMapEntryCount, uint8_t channelToRemap)
 {
@@ -336,18 +296,6 @@ static bool isRxDataDriven(void) {
     return !(feature(FEATURE_RX_PARALLEL_PWM | FEATURE_RX_PPM));
 }
 
-static void resetRxSignalReceivedFlagIfNeeded(timeUs_t currentTimeUs)
-{
-    if (!rxSignalReceived) {
-        return;
-    }
-
-    if (((int32_t)(currentTimeUs - needRxSignalBefore) >= 0)) {
-        rxSignalReceived = false;
-        rxSignalReceivedNotDataDriven = false;
-    }
-}
-
 void suspendRxSignal(void)
 {
     suspendRxSignalUntil = micros() + SKIP_RC_ON_SUSPEND_PERIOD;
@@ -364,67 +312,41 @@ void resumeRxSignal(void)
 
 bool updateRx(timeUs_t currentTimeUs)
 {
-    resetRxSignalReceivedFlagIfNeeded(currentTimeUs);
-
-    if (isRxDataDriven()) {
-        rxDataReceived = false;
-    }
-
-
-#ifdef SERIAL_RX
-    if (feature(FEATURE_RX_SERIAL)) {
-        const uint8_t frameStatus = serialRxFrameStatus(rxConfig);
-        if (frameStatus & RX_FRAME_COMPLETE) {
-            rxDataReceived = true;
-            rxIsInFailsafeMode = (frameStatus & RX_FRAME_FAILSAFE) != 0;
-            rxSignalReceived = !rxIsInFailsafeMode;
-            needRxSignalBefore = currentTimeUs + DELAY_10_HZ;
+    if (rxSignalReceived) {
+        if (((int32_t)(currentTimeUs - needRxSignalBefore) >= 0)) {
+            rxSignalReceived = false;
+            rxSignalReceivedNotDataDriven = false;
         }
     }
-#endif
 
-#ifdef USE_RX_SPI
-    if (feature(FEATURE_RX_SPI)) {
-        const uint8_t frameStatus = rxRuntimeConfig.rcFrameStatusFn();
-        if (frameStatus & RX_FRAME_COMPLETE) {
-            rxDataReceived = true;
-            rxIsInFailsafeMode = false;
-            rxSignalReceived = !rxIsInFailsafeMode;
-            needRxSignalBefore = currentTimeUs + DELAY_5_HZ;
-        }
-    }
-#endif
-
-#ifndef SKIP_RX_MSP
-    if (feature(FEATURE_RX_MSP)) {
-        const uint8_t frameStatus = rxMspFrameStatus();
-        if (frameStatus & RX_FRAME_COMPLETE) {
-            rxDataReceived = true;
-            rxIsInFailsafeMode = false;
-            rxSignalReceived = !rxIsInFailsafeMode;
-            needRxSignalBefore = currentTimeUs + DELAY_5_HZ;
-        }
-    }
-#endif
-
-#ifndef SKIP_RX_PWM_PPM
+#if defined(USE_PWM) || defined(USE_PPM)
     if (feature(FEATURE_RX_PPM)) {
         if (isPPMDataBeingReceived()) {
             rxSignalReceivedNotDataDriven = true;
             rxIsInFailsafeModeNotDataDriven = false;
-            needRxSignalBefore = currentTimeUs + DELAY_10_HZ;
+            needRxSignalBefore = currentTimeUs + needRxSignalMaxDelayUs;
             resetPPMDataReceivedState();
         }
     }
-
-    if (feature(FEATURE_RX_PARALLEL_PWM)) {
+    else if (feature(FEATURE_RX_PARALLEL_PWM)) {
         if (isPWMDataBeingReceived()) {
             rxSignalReceivedNotDataDriven = true;
             rxIsInFailsafeModeNotDataDriven = false;
-            needRxSignalBefore = currentTimeUs + DELAY_10_HZ;
+            needRxSignalBefore = currentTimeUs + needRxSignalMaxDelayUs;
         }
     }
 #endif
+    {
+        rxDataReceived = false;
+        const uint8_t frameStatus = rxRuntimeConfig.rcFrameStatusFn();
+        if (frameStatus & RX_FRAME_COMPLETE) {
+            rxDataReceived = true;
+            rxIsInFailsafeMode = (frameStatus & RX_FRAME_FAILSAFE) != 0;
+            rxSignalReceived = !rxIsInFailsafeMode;
+            needRxSignalBefore = currentTimeUs + needRxSignalMaxDelayUs;
+        }
+    }
+
     return rxDataReceived || ((int32_t)(currentTimeUs - rxUpdateAt) >= 0); // data driven or 50Hz
 }
 
