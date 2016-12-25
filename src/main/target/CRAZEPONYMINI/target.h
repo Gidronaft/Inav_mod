@@ -67,7 +67,7 @@
 #define RX_IRQ_PIN                  PA15
 #define RX_IRQ_GPIO_CLK_PERIPHERAL  RCC_APB2Periph_GPIOA
 
-#under USE_RX_MSP
+#undef USE_RX_MSP
 #define SKIP_INFLIGHT_ADJUSTMENTS
 #undef USE_PWM
 #undef USE_PPM
