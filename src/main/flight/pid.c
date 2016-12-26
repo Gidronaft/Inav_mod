@@ -45,10 +45,11 @@
 
 
 typedef struct {
-    float kP;
-    float kI;
-    float kD;
-    float kT;
+    float kP;   // Proportional gain
+    float kI;   // Integral gain
+    float kD;   // Derivative gain
+    float kFF;  // Feed-forward gain
+    float kT;   // Back-calculation tracking gain
 
     float gyroRate;
     float rateTarget;
@@ -83,7 +84,6 @@ static pt1Filter_t magHoldRateFilter;
 
 // Thrust PID Attenuation factor. 0.0f means fully attenuated, 1.0f no attenuation is applied
 static bool pidGainsUpdateRequired = false;
-static float tpaFactor;
 int16_t axisPID[FLIGHT_DYNAMICS_INDEX_COUNT];
 
 #ifdef BLACKBOX
@@ -147,11 +147,56 @@ float pidRcCommandToRate(int16_t stick, uint8_t rate)
 /*
 FP-PID has been rescaled to match LuxFloat (and MWRewrite) from Cleanflight 1.13
 */
+#define FP_PID_RATE_FF_MULTIPLIER   31.0f
 #define FP_PID_RATE_P_MULTIPLIER    31.0f
 #define FP_PID_RATE_I_MULTIPLIER    4.0f
 #define FP_PID_RATE_D_MULTIPLIER    1905.0f
 #define FP_PID_LEVEL_P_MULTIPLIER   65.6f
 #define FP_PID_YAWHOLD_P_MULTIPLIER 80.0f
+
+static float calculateFixedWingTPAFactor(const controlRateConfig_t *controlRateConfig, const struct motorConfig_s *motorConfig)
+{
+    float tpaFactor;
+
+    // tpa_rate is amount of curve TPA applied to PIDs
+    // tpa_breakpoint for fixed wing is cruise throttle value (value at which PIDs were tuned)
+    if (controlRateConfig->dynThrPID != 0 && controlRateConfig->tpa_breakpoint > motorConfig->minthrottle) {
+        if (rcCommand[THROTTLE] > motorConfig->minthrottle) {
+            // Calculate TPA according to throttle
+            tpaFactor = 0.5f + ((float)(controlRateConfig->tpa_breakpoint - motorConfig->minthrottle) / (rcCommand[THROTTLE] - motorConfig->minthrottle) / 2.0f);
+
+            // Limit to [0.5; 2] range
+            tpaFactor = constrainf(tpaFactor, 0.5f, 2.0f);
+        }
+        else {
+            tpaFactor = 2.0f;
+        }
+
+        // Attenuate TPA curve according to configured amount
+        tpaFactor = 1.0f + (tpaFactor - 1.0f) * (controlRateConfig->dynThrPID / 100.0f);
+    }
+    else {
+        tpaFactor = 1.0f;
+    }
+
+    return tpaFactor;
+}
+
+static float calculateMultirotorTPAFactor(const controlRateConfig_t *controlRateConfig, const struct motorConfig_s *motorConfig)
+{
+    float tpaFactor;
+
+    // TPA should be updated only when TPA is actually set
+    if (controlRateConfig->dynThrPID == 0 || rcCommand[THROTTLE] < controlRateConfig->tpa_breakpoint) {
+        tpaFactor = 1.0f;
+    } else if (rcCommand[THROTTLE] < motorConfig->maxthrottle) {
+        tpaFactor = (100 - (uint16_t)controlRateConfig->dynThrPID * (rcCommand[THROTTLE] - controlRateConfig->tpa_breakpoint) / (motorConfig->maxthrottle - controlRateConfig->tpa_breakpoint)) / 100.0f;
+    } else {
+        tpaFactor = (100 - controlRateConfig->dynThrPID) / 100.0f;
+    }
+
+    return tpaFactor;
+}
 
 void schedulePidGainsUpdate(void)
 {
@@ -173,66 +218,34 @@ void updatePIDCoefficients(const pidProfile_t *pidProfile, const controlRateConf
         return;
     }
 
-    // Calculate TPA factor - different logic for airplanes and multirotors
-    if (STATE(FIXED_WING)) {
-        // tpa_rate is amount of curve TPA applied to PIDs
-        // tpa_breakpoint for fixed wing is cruise throttle value (value at which PIDs were tuned)
-        if (controlRateConfig->dynThrPID != 0 && controlRateConfig->tpa_breakpoint > motorConfig->minthrottle) {
-            if (rcCommand[THROTTLE] > motorConfig->minthrottle) {
-                // Calculate TPA according to throttle
-                tpaFactor = 0.5f + ((float)(controlRateConfig->tpa_breakpoint - motorConfig->minthrottle) / (rcCommand[THROTTLE] - motorConfig->minthrottle) / 2.0f);
-
-                // Limit to [0.5; 2] range
-                tpaFactor = constrainf(tpaFactor, 0.5f, 2.0f);
-            }
-            else {
-                tpaFactor = 2.0f;
-            }
-
-            // Attenuate TPA curve according to configured amount
-            tpaFactor = 1.0f + (tpaFactor - 1.0f) * (controlRateConfig->dynThrPID / 100.0f);
-        }
-        else {
-            tpaFactor = 1.0f;
-        }
-    }
-    else {
-        // TPA should be updated only when TPA is actually set
-        if (controlRateConfig->dynThrPID == 0 || rcCommand[THROTTLE] < controlRateConfig->tpa_breakpoint) {
-            tpaFactor = 1.0f;
-        } else if (rcCommand[THROTTLE] < motorConfig->maxthrottle) {
-            tpaFactor = (100 - (uint16_t)controlRateConfig->dynThrPID * (rcCommand[THROTTLE] - controlRateConfig->tpa_breakpoint) / (motorConfig->maxthrottle - controlRateConfig->tpa_breakpoint)) / 100.0f;
-        } else {
-            tpaFactor = (100 - controlRateConfig->dynThrPID) / 100.0f;
-        }
-    }
+    const float tpaFactor = STATE(FIXED_WING) ?
+                                calculateMultirotorTPAFactor(controlRateConfig, motorConfig) :
+                                calculateFixedWingTPAFactor(controlRateConfig, motorConfig);
 
     // PID coefficients can be update only with THROTTLE and TPA or inflight PID adjustments
     //TODO: Next step would be to update those only at THROTTLE or inflight adjustments change
     for (int axis = 0; axis < 3; axis++) {
-        pidState[axis].kP = pidProfile->P8[axis] / FP_PID_RATE_P_MULTIPLIER;
-        pidState[axis].kI = pidProfile->I8[axis] / FP_PID_RATE_I_MULTIPLIER;
-        pidState[axis].kD = pidProfile->D8[axis] / FP_PID_RATE_D_MULTIPLIER;
-
-        // Apply TPA
         if (STATE(FIXED_WING)) {
             // Airplanes - scale all PIDs according to TPA
-            pidState[axis].kP *= tpaFactor;
-            pidState[axis].kI *= tpaFactor;
-            pidState[axis].kD *= tpaFactor * tpaFactor;     // acceleration scales with speed^2
+            pidState[axis].kFF = pidProfile->D8[axis] / FP_PID_RATE_FF_MULTIPLIER * tpaFactor;                  // Fixme
+            pidState[axis].kP  = pidProfile->P8[axis] / FP_PID_RATE_P_MULTIPLIER  * tpaFactor * tpaFactor;
+            pidState[axis].kI  = pidProfile->I8[axis] / FP_PID_RATE_I_MULTIPLIER  * tpaFactor;
+            pidState[axis].kD  = 0.0f;
+            pidState[axis].kT  = 0.0f;
         }
         else {
-            // Multicopter - scale roll/pitch PIDs according to TPA
-            if (axis != FD_YAW) {
-                pidState[axis].kP *= tpaFactor;
-                pidState[axis].kD *= tpaFactor;
-            }
-        }
+            const float axisTPA = (axis == FD_YAW) ? 1.0f : tpaFactor;
+            pidState[axis].kFF = 0.0f;
+            pidState[axis].kP  = pidProfile->P8[axis] / FP_PID_RATE_P_MULTIPLIER * axisTPA;
+            pidState[axis].kI  = pidProfile->I8[axis] / FP_PID_RATE_I_MULTIPLIER;
+            pidState[axis].kD  = pidProfile->D8[axis] / FP_PID_RATE_D_MULTIPLIER * axisTPA;
 
-        if ((pidProfile->P8[axis] != 0) && (pidProfile->I8[axis] != 0)) {
-            pidState[axis].kT = 2.0f / ((pidState[axis].kP / pidState[axis].kI) + (pidState[axis].kD / pidState[axis].kP));
-        } else {
-            pidState[axis].kT = 0;
+            // Tracking anti-windup requires P/I/D to be all defined which is only true for MC
+            if ((pidProfile->P8[axis] != 0) && (pidProfile->I8[axis] != 0)) {
+                pidState[axis].kT = 2.0f / ((pidState[axis].kP / pidState[axis].kI) + (pidState[axis].kD / pidState[axis].kP));
+            } else {
+                pidState[axis].kT = 0;
+            }
         }
     }
 
@@ -318,7 +331,51 @@ static void pidApplySetpointRateLimiting(const pidProfile_t *pidProfile, pidStat
     }
 }
 
-static void pidApplyRateController(const pidProfile_t *pidProfile, pidState_t *pidState, flight_dynamics_index_t axis)
+#ifdef USE_SERVOS
+static void pidApplyFixedWingRateController(const pidProfile_t *pidProfile, pidState_t *pidState, flight_dynamics_index_t axis)
+{
+    const float rateError = pidState->rateTarget - pidState->gyroRate;
+
+    // Calculate new P-term and FF-term
+    float newPTerm = rateError * pidState->kP;
+    float newFFTerm = pidState->rateTarget * pidState->kFF;
+
+    // Additional P-term LPF on YAW axis
+    if (axis == FD_YAW && pidProfile->yaw_lpf_hz) {
+        newPTerm = pt1FilterApply4(&pidState->ptermLpfState, newPTerm, pidProfile->yaw_lpf_hz, dT);
+    }
+
+    // Calculate integral
+
+    // Prevent strong Iterm accumulation during stick inputs
+    // FIXME: DE: Check if this is needed for fixed-wing? I suspect not.
+    const float integratorThreshold = (axis == FD_YAW) ? pidProfile->yawItermIgnoreRate : pidProfile->rollPitchItermIgnoreRate;
+    const float antiWindupScaler = constrainf(1.0f - (ABS(pidState->rateTarget) / integratorThreshold), 0.0f, 1.0f);
+
+    pidState->errorGyroIf += rateError * pidState->kI * antiWindupScaler * dT;
+
+    if (STATE(ANTI_WINDUP)) {
+        pidState->errorGyroIf = constrainf(pidState->errorGyroIf, -pidState->errorGyroIfLimit, pidState->errorGyroIfLimit);
+    } else {
+        pidState->errorGyroIfLimit = ABS(pidState->errorGyroIf);
+    }
+
+    if (STATE(FIXED_WING) && pidProfile->fixedWingItermThrowLimit != 0) {
+        pidState->errorGyroIf = constrainf(pidState->errorGyroIf, -pidProfile->fixedWingItermThrowLimit, pidProfile->fixedWingItermThrowLimit);
+    }
+
+    axisPID[axis] = constrainf(newPTerm + newFFTerm + pidState->errorGyroIf, -PID_MAX_OUTPUT, +PID_MAX_OUTPUT);
+
+#ifdef BLACKBOX
+    axisPID_P[axis] = newPTerm;
+    axisPID_I[axis] = pidState->errorGyroIf;
+    axisPID_D[axis] = newFFTerm;
+    axisPID_Setpoint[axis] = pidState->rateTarget;
+#endif
+}
+#endif
+
+static void pidApplyMulticopterRateController(const pidProfile_t *pidProfile, pidState_t *pidState, flight_dynamics_index_t axis)
 {
     const float rateError = pidState->rateTarget - pidState->gyroRate;
 
@@ -368,12 +425,6 @@ static void pidApplyRateController(const pidProfile_t *pidProfile, pidState_t *p
     } else {
         pidState->errorGyroIfLimit = ABS(pidState->errorGyroIf);
     }
-
-#ifdef USE_SERVOS
-    if (STATE(FIXED_WING) && pidProfile->fixedWingItermThrowLimit != 0) {
-        pidState->errorGyroIf = constrainf(pidState->errorGyroIf, -pidProfile->fixedWingItermThrowLimit, pidProfile->fixedWingItermThrowLimit);
-    }
-#endif
 
     axisPID[axis] = newOutputLimited;
 
@@ -557,6 +608,15 @@ void pidController(const pidProfile_t *pidProfile, const controlRateConfig_t *co
     // Step 4: Run gyro-driven control
     for (int axis = 0; axis < 3; axis++) {
         // Apply PID setpoint controller
-        pidApplyRateController(pidProfile, &pidState[axis], axis);     // scale gyro rate to DPS
+#ifdef USE_SERVOS
+        if (STATE(FIXED_WING)) {
+            pidApplyFixedWingRateController(pidProfile, &pidState[axis], axis);
+        }
+        else {
+            pidApplyMulticopterRateController(pidProfile, &pidState[axis], axis);
+        }
+#else
+        pidApplyMulticopterRateController(pidProfile, &pidState[axis], axis);
+#endif
     }
 }
