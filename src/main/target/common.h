@@ -24,8 +24,8 @@
 #define USE_SERVOS
 #define USE_CLI
 
-#define USE_PWM
-#define USE_PPM
+#define USE_RX_PWM
+#define USE_RX_PPM
 #define SERIAL_RX
 #define USE_SERIALRX_SPEKTRUM   // Cheap and fairly common protocol
 #define USE_SERIALRX_SBUS       // Very common protocol

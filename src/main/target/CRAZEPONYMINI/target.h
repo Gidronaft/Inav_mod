@@ -69,8 +69,8 @@
 
 #undef USE_RX_MSP
 #define SKIP_INFLIGHT_ADJUSTMENTS
-#undef USE_PWM
-#undef USE_PPM
+#undef USE_RX_PWM
+#undef USE_RX_PPM
 #undef SERIAL_RX
 #undef BLACKBOX
 

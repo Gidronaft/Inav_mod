@@ -84,8 +84,8 @@
 //#define TELEMETRY
 //#define TELEMETRY_LTM
 //#define TELEMETRY_NRF24_LTM
-#undef USE_PWM
-#undef USE_PPM
+#undef USE_RX_PWM
+#undef USE_RX_PPM
 #undef SERIAL_RX
 //#undef SKIP_TASK_STATISTICS
 

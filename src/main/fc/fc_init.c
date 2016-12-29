@@ -296,7 +296,7 @@ void init(void)
 
     pwm_params.enablePWMOutput = feature(FEATURE_PWM_OUTPUT_ENABLE);
 
-#if defined(USE_PWM) || defined(USE_PPM)
+#if defined(USE_RX_PWM) || defined(USE_RX_PPM)
     pwmRxInit(pwmRxConfig());
 #endif
 
