@@ -346,13 +346,7 @@ static void pidApplyFixedWingRateController(const pidProfile_t *pidProfile, pidS
     }
 
     // Calculate integral
-
-    // Prevent strong Iterm accumulation during stick inputs
-    // FIXME: DE: Check if this is needed for fixed-wing? I suspect not.
-    const float integratorThreshold = (axis == FD_YAW) ? pidProfile->yawItermIgnoreRate : pidProfile->rollPitchItermIgnoreRate;
-    const float antiWindupScaler = constrainf(1.0f - (ABS(pidState->rateTarget) / integratorThreshold), 0.0f, 1.0f);
-
-    pidState->errorGyroIf += rateError * pidState->kI * antiWindupScaler * dT;
+    pidState->errorGyroIf += rateError * pidState->kI * dT;
 
     if (STATE(ANTI_WINDUP)) {
         pidState->errorGyroIf = constrainf(pidState->errorGyroIf, -pidState->errorGyroIfLimit, pidState->errorGyroIfLimit);
