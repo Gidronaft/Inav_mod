@@ -219,8 +219,8 @@ void updatePIDCoefficients(const pidProfile_t *pidProfile, const controlRateConf
     }
 
     const float tpaFactor = STATE(FIXED_WING) ?
-                                calculateMultirotorTPAFactor(controlRateConfig, motorConfig) :
-                                calculateFixedWingTPAFactor(controlRateConfig, motorConfig);
+                                calculateFixedWingTPAFactor(controlRateConfig, motorConfig) :
+                                calculateMultirotorTPAFactor(controlRateConfig, motorConfig);
 
     // PID coefficients can be update only with THROTTLE and TPA or inflight PID adjustments
     //TODO: Next step would be to update those only at THROTTLE or inflight adjustments change
