@@ -21,7 +21,7 @@
 #define CRSF_PORT_OPTIONS       (SERIAL_STOPBITS_1 | SERIAL_PARITY_NO)
 #define CRSF_PORT_MODE          MODE_RXTX
 
-#define CRSF_MAX_CHANNEL        16
+#define CRSF_MAX_CHANNEL        17
 
 typedef enum {
     CRSF_FRAMETYPE_GPS = 0x02,

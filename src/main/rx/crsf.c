@@ -105,6 +105,20 @@ struct crsfPayloadRcChannelsPacked_s {
 
 typedef struct crsfPayloadRcChannelsPacked_s crsfPayloadRcChannelsPacked_t;
 
+struct crsfPayloadLinkStatistics_s {
+    uint8_t     uplinkRSSIAnt1;
+    uint8_t     uplinkRSSIAnt2;
+    uint8_t     uplinkLQ;
+    int8_t      uplinkSNR;
+    uint8_t     activeAntenna;
+    uint8_t     rfMode;
+    uint8_t     uplinkTXPower;
+    uint8_t     downlinkRSSI;
+    uint8_t     downlinkLQ;
+    int8_t      downlinkSNR;
+} __attribute__ ((__packed__));
+
+typedef struct crsfPayloadLinkStatistics_s crsfPayloadLinkStatistics_t;
 
 // Receive ISR callback, called back from serial port
 STATIC_UNIT_TESTED void crsfDataReceive(uint16_t c)
@@ -156,6 +170,7 @@ STATIC_UNIT_TESTED uint8_t crsfFrameStatus(void)
                 return RX_FRAME_PENDING;
             }
             crsfFrame.frame.frameLength = CRSF_FRAME_RC_CHANNELS_PAYLOAD_SIZE + CRSF_FRAME_LENGTH_TYPE_CRC;
+
             // unpack the RC channels
             const crsfPayloadRcChannelsPacked_t* rcChannels = (crsfPayloadRcChannelsPacked_t*)&crsfFrame.frame.payload;
             crsfChannelData[0] = rcChannels->chan0;
@@ -176,6 +191,21 @@ STATIC_UNIT_TESTED uint8_t crsfFrameStatus(void)
             crsfChannelData[15] = rcChannels->chan15;
             return RX_FRAME_COMPLETE;
         }
+        else if (crsfFrame.frame.type == CRSF_FRAMETYPE_LINK_STATISTICS) {
+            // CRC includes type and payload of each frame
+            const uint8_t crc = crsfFrameCRC();
+            if (crc != crsfFrame.frame.payload[CRSF_FRAME_LINK_STATISTICS_PAYLOAD_SIZE]) {
+                return RX_FRAME_PENDING;
+            }
+            crsfFrame.frame.frameLength = CRSF_FRAME_LINK_STATISTICS_PAYLOAD_SIZE + CRSF_FRAME_LENGTH_TYPE_CRC;
+
+            // Inject link quality into channel 17
+            const crsfPayloadLinkStatistics_t* linkStats = (crsfPayloadLinkStatistics_t*)&crsfFrame.frame.payload;
+            crsfChannelData[16] = scaleRange(constrain(linkStats->uplinkLQ, 0, 100), 0, 100, 191, 1791);    // will map to [1000;2000] range
+
+            // This is not RC channels frame, update channel value but don't indicate frame completion
+            return RX_FRAME_PENDING;
+        }
     }
     return RX_FRAME_PENDING;
 }
@@ -191,7 +221,7 @@ STATIC_UNIT_TESTED uint16_t crsfReadRawRC(const rxRuntimeConfig_t *rxRuntimeConf
      * scale factor = (2012-988) / (1811-172) = 0.62477120195241
      * offset = 988 - 172 * 0.62477120195241 = 880.53935326418548
      */
-    return (0.62477120195241f * crsfChannelData[chan]) + 881;
+    return (crsfChannelData[chan] * 1024 / 1639) + 881;
 }
 
 void crsfRxWriteTelemetryData(const void *data, int len)
